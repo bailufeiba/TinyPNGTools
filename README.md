@@ -1,9 +1,30 @@
-# TinyPNGTools
- TinyPNGTools 基于SuperPowers+DeepSeek v4 pro实现,烧了大概3000万token
- 
- TinyPNGTools 是一个用 TinyPNG/Tinify HTTP API 批量压缩图片的 Node.js 命令行工具。
+# TinyPNGTools 
 
-工具会读取当前工具目录下 SRC_PNG 中的图片，上传到 TinyPNG 服务器压缩，再把结果下载到 OUT_PNG。输出文件的相对路径和文件名会与 SRC_PNG 保持一致。
+ TinyPNGTools 是一个用 TinyPNG/Tinify HTTP API 批量压缩图片的 Node.js 命令行工具。
+ 
+ TinyPNGTools 基于SuperPowers+DeepSeek v4 pro实现,烧了大概3000万token
+
+### 普通模式:
+    node TinyPNGTools.js
+- 工具会读取当前工具目录下 SRC_PNG 中的图片，上传到 TinyPNG 服务器压缩，再把结果下载到 OUT_PNG。
+- 输出文件的相对路径和文件名会与 SRC_PNG 保持一致。
+- 成功后会更新SRC_PNG.json
+
+
+ ### source模式:
+    node TinyPNGTools.js --source D:\my-images --ignore D:\my-images\ignore.json
+- 指向一个外部图片目录，工具自动检测新增和修改的文件，压缩后回写。
+- 工具会生成 todo.json 记录源目录文件信息，与 SRC_PNG.json 比较差异。只有新增或 MD5 变化的文件才会进入压缩流程。压缩完成后，结果自动复制回源目录，并删除 todo.json。
+- 该模式只处理 todo.json 与 SRC_PNG.json 对比后得到的差异文件。
+- "D:\my-images\ignore.json"里指定的被忽略的文件不会进入压缩流程。
+ 
+
+
+ TinyPng地址 https://tinypng.com/
+ 
+ TinyPng API申请 https://tinify.com/developers
+ 
+ TinyPng API文档 https://tinify.com/developers/reference/http
 
 ## 功能
 
@@ -35,6 +56,8 @@
     TEST/FAIL_PNG
 
 ## 配置
+
+API KEY 申请地址 https://tinify.com/developers
 
 复制 config.example.json 为 config.json，然后填写自己的 TinyPNG API Key。
 
