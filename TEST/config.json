@@ -1,0 +1,8 @@
+{
+  "apiKey": "abc",
+  "concurrency": 4,
+  "extensions": [
+    "png"
+  ],
+  "maxRetries": 2
+}

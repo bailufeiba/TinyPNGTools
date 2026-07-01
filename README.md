@@ -2,7 +2,7 @@
 
  TinyPNGTools 是一个用 TinyPNG/Tinify HTTP API 批量压缩图片的 Node.js 命令行工具。
  
- TinyPNGTools 基于SuperPowers+DeepSeek v4 pro实现,烧了大概3000万token
+ TinyPNGTools 纯AI实现 SuperPowers + DeepSeek v4 pro
 
 ### 普通模式:
     node TinyPNGTools.js
@@ -18,7 +18,12 @@
 - 该模式只处理 todo.json 与 SRC_PNG.json 对比后得到的差异文件。
 - "D:\my-images\ignore.json"里指定的被忽略的文件不会进入压缩流程。
  
-
+ ### 命令支持
+- node TinyPNGTools.js
+- node TinyPNGTools.js --source <dir> [--ignore <path>]
+- node TinyPNGTools.js clear
+- node TinyPNGTools.js --help
+- node TinyPNGTools.js -h
 
  TinyPng地址 https://tinypng.com/
  
@@ -127,3 +132,40 @@ ignore.json 格式：
 ## TinyPNG API 文档
 
 https://tinify.com/developers/reference/http
+
+## clear 命令
+
+清空缓存并强制后续重新压缩全部 PNG：
+
+    node TinyPNGTools.js clear
+
+执行后工具会先提示：
+
+    是否清空所有缓存？该行为会导致后续所有PNG重新压缩 (y/n):
+
+只有输入 `y` 或 `yes` 才会继续执行。确认后会：
+
+- 清空并重建 `SRC_PNG`
+- 清空并重建 `OUT_PNG`
+- 清空并重建 `RETRY_PNG`
+- 清空并重建 `FAIL_PNG`
+- 删除 `todo.json`
+- 将 `SRC_PNG.json` 重置为：
+
+    {
+      "files": []
+    }
+
+输入其他内容会取消操作，不会清空缓存。
+
+## help 命令
+
+查看当前支持的命令和参数：
+
+    node TinyPNGTools.js --help
+
+也可以使用短参数：
+
+    node TinyPNGTools.js -h
+
+该命令只打印帮助信息，不会读取 `config.json`，也不会执行压缩或清理操作。

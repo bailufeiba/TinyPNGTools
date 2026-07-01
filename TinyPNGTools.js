@@ -104,6 +104,25 @@ function formatSummary(summary) {
   ].join('\n');
 }
 
+function formatHelp() {
+  return [
+    'TinyPNGTools',
+    '',
+    'Usage:',
+    '  node TinyPNGTools.js',
+    '  node TinyPNGTools.js --source <dir> [--ignore <path>]',
+    '  node TinyPNGTools.js clear',
+    '  node TinyPNGTools.js --help',
+    '',
+    'Commands:',
+    '  default                 Compress pending images from SRC_PNG to OUT_PNG.',
+    '  --source <dir>          Sync changed files from an external source directory.',
+    '  --ignore <path>         Ignore paths listed in a JSON file when using --source.',
+    '  clear                   Clear SRC_PNG, OUT_PNG, RETRY_PNG, FAIL_PNG, delete todo.json, reset SRC_PNG.json.',
+    '  --help, -h              Show this help.',
+  ].join('\n');
+}
+
 
 // 确保四个工作目录存在
 function ensureWorkDirs(baseDir) {
@@ -447,6 +466,23 @@ function createTinifyClient(apiKey, request = httpsRequest) {
 // CLI 入口：解析参数，加载配置，执行压缩或同步模式
 async function main() {
   const baseDir = __dirname;
+
+  if (process.argv[2] === '--help' || process.argv[2] === '-h') {
+    console.log(formatHelp());
+    return;
+  }
+
+  if (process.argv[2] === 'clear') {
+    const confirmed = await askYesNo('是否清空所有缓存？该行为会导致后续所有PNG重新压缩');
+    if (!confirmed) {
+      console.log('已取消清空缓存。');
+      return;
+    }
+    clearCache(baseDir);
+    console.log('缓存已清空。');
+    return;
+  }
+
   const config = loadConfig(baseDir);
 
   let sourceDir = null;
@@ -518,6 +554,19 @@ async function main() {
 function clearDirectory(dirPath) {
   fs.rmSync(dirPath, { recursive: true, force: true });
   fs.mkdirSync(dirPath, { recursive: true });
+}
+
+function clearCache(baseDir) {
+  for (const folderName of Object.values(WORK_DIRS)) {
+    clearDirectory(path.join(baseDir, folderName));
+  }
+
+  const todoPath = path.join(baseDir, 'todo.json');
+  if (fs.existsSync(todoPath)) {
+    fs.rmSync(todoPath, { force: true });
+  }
+
+  fs.writeFileSync(path.join(baseDir, 'SRC_PNG.json'), JSON.stringify({ files: [] }, null, 2), 'utf8');
 }
 
 // 检查 RETRY_PNG 中是否有待重试的匹配文件
@@ -640,8 +689,10 @@ module.exports = {
   loadConfig,
   askYesNo,
   formatSummary,
+  formatHelp,
   removeEmptyParents,
   clearDirectory,
+  clearCache,
   hasRetryFiles,
   compressSourceFile,
   compressRetryFile,
