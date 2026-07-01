@@ -1,6 +1,7 @@
 # TinyPNGTools
-TinyPNGTools 基于SuperPowers+DeepSeek v4 pro实现,烧了大概3000万token
-TinyPNGTools 是一个用 TinyPNG/Tinify HTTP API 批量压缩图片的 Node.js 命令行工具。
+ TinyPNGTools 基于SuperPowers+DeepSeek v4 pro实现,烧了大概3000万token
+ 
+ TinyPNGTools 是一个用 TinyPNG/Tinify HTTP API 批量压缩图片的 Node.js 命令行工具。
 
 工具会读取当前工具目录下 SRC_PNG 中的图片，上传到 TinyPNG 服务器压缩，再把结果下载到 OUT_PNG。输出文件的相对路径和文件名会与 SRC_PNG 保持一致。
 
