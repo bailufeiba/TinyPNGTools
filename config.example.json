@@ -1,0 +1,11 @@
+{
+  "apiKey": "YourTinyPNG_API_KEY",
+  "concurrency": 5,
+  "extensions": [
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp"
+  ],
+  "maxRetries": 3
+}
