@@ -287,6 +287,13 @@ function generateFileList(dirPath, extensions) {
   };
 }
 
+function entryMatchesMd5(entry, md5) {
+  if (!entry || !md5) {
+    return false;
+  }
+  return entry.md5 === md5 || entry.md52 === md5;
+}
+
 // 安全读取 SRC_PNG.json，文件不存在或格式损坏时返回空列表
 function readSrcPngJson(baseDir) {
   const filePath = path.join(baseDir, 'SRC_PNG.json');
@@ -326,13 +333,13 @@ function syncSourceToWorkDirs(baseDir, sourceDir, extensions, ignoreSet) {
   fs.writeFileSync(path.join(baseDir, 'todo.json'), JSON.stringify(todo, null, 2), 'utf8');
 
   const srcPng = readSrcPngJson(baseDir);
-  const srcPngMap = new Map(srcPng.files.map(f => [f.path, f.md5]));
+  const srcPngMap = new Map(srcPng.files.map(f => [f.path, f]));
 
   const changedFiles = [];
 
   for (const entry of todo.files) {
-    const srcPngMd5 = srcPngMap.get(entry.path);
-    if (srcPngMd5 === undefined || srcPngMd5 !== entry.md5) {
+    const srcPngEntry = srcPngMap.get(entry.path);
+    if (!entryMatchesMd5(srcPngEntry, entry.md5)) {
       if (ignoreSet && ignoreSet.has(entry.path)) {
         const outFile = path.join(baseDir, WORK_DIRS.out, entry.path);
         if (fs.existsSync(outFile)) {
@@ -358,13 +365,14 @@ function syncSourceToWorkDirs(baseDir, sourceDir, extensions, ignoreSet) {
 }
 
 // 更新 SRC_PNG.json 中指定路径文件的 MD5 记录（新增或覆盖）
-function updateSrcPngJson(baseDir, relativePath, md5) {
+function updateSrcPngJson(baseDir, relativePath, md5, md52) {
   const data = readSrcPngJson(baseDir);
   const existing = data.files.findIndex(f => f.path === relativePath);
   if (existing >= 0) {
     data.files[existing].md5 = md5;
+    data.files[existing].md52 = md52;
   } else {
-    data.files.push({ path: relativePath, md5 });
+    data.files.push({ path: relativePath, md5, md52 });
   }
   fs.writeFileSync(path.join(baseDir, 'SRC_PNG.json'), JSON.stringify(data, null, 2), 'utf8');
 }
@@ -585,7 +593,8 @@ async function compressSourceFile(baseDir, sourceFile, client, logger) {
   fs.writeFileSync(outputPath, outputBuffer);
   logger.log(`下载完成: ${relativePath}`);
   const srcMd5 = crypto.createHash('md5').update(inputBuffer).digest('hex');
-  updateSrcPngJson(baseDir, relativePath, srcMd5);
+  const outputMd5 = crypto.createHash('md5').update(outputBuffer).digest('hex');
+  updateSrcPngJson(baseDir, relativePath, srcMd5, outputMd5);
   return outputPath;
 }
 

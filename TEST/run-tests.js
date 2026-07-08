@@ -1,4 +1,5 @@
 const assert = require('assert');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -26,6 +27,10 @@ function writeFile(relativePath, content) {
 
 function exists(relativePath) {
   return fs.existsSync(path.join(TEST_ROOT, relativePath));
+}
+
+function md5(content) {
+  return crypto.createHash('md5').update(Buffer.from(content)).digest('hex');
 }
 
 const tests = [];
@@ -355,6 +360,28 @@ test('processes pending source files into OUT_PNG and reports summary', async ()
   assert.strictEqual(summary.failed, 0);
 });
 
+test('compressSourceFile records source and output md5 values', async () => {
+  writeFile(path.join('SRC_PNG', 'manifest.png'), 'source-image');
+  const client = {
+    compress: async (buffer) => Buffer.from(`compressed:${buffer.toString()}`),
+  };
+
+  await tool.compressSourceFile(
+    TEST_ROOT,
+    path.join(TEST_ROOT, 'SRC_PNG', 'manifest.png'),
+    client,
+    { log() {}, error() {} }
+  );
+
+  const data = JSON.parse(fs.readFileSync(path.join(TEST_ROOT, 'SRC_PNG.json'), 'utf8'));
+  const entry = data.files.find((item) => item.path === 'manifest.png');
+  assert.deepStrictEqual(entry, {
+    path: 'manifest.png',
+    md5: md5('source-image'),
+    md52: md5('compressed:source-image'),
+  });
+});
+
 test('failed source files retry three times then move to FAIL_PNG', async () => {
   writeFile(path.join('SRC_PNG', 'bad.png'), 'bad');
   let calls = 0;
@@ -556,18 +583,37 @@ test('syncSourceToWorkDirs copies changed files and clears old outputs', () => {
   assert.strictEqual(fs.existsSync(path.join(TEST_ROOT, 'todo.json')), true);
 });
 
+test('syncSourceToWorkDirs skips files whose md5 matches md52 manifest value', () => {
+  const sourceDir = path.join(TEST_ROOT, 'SRC_PNG');
+  writeFile(path.join('SRC_PNG', 'already-compressed.png'), 'compressed-content');
+  writeFile(path.join('OUT_PNG', 'already-compressed.png'), 'keep-output');
+
+  fs.writeFileSync(path.join(TEST_ROOT, 'SRC_PNG.json'), JSON.stringify({
+    files: [{
+      path: 'already-compressed.png',
+      md5: '00000000000000000000000000000000',
+      md52: md5('compressed-content')
+    }]
+  }));
+
+  const result = tool.syncSourceToWorkDirs(TEST_ROOT, sourceDir, ['.png']);
+
+  assert.deepStrictEqual(result.changedFiles, []);
+  assert.strictEqual(fs.readFileSync(path.join(TEST_ROOT, 'OUT_PNG', 'already-compressed.png'), 'utf8'), 'keep-output');
+});
+
 test('updateSrcPngJson adds new entry and updates existing', () => {
   fs.writeFileSync(path.join(TEST_ROOT, 'SRC_PNG.json'), JSON.stringify({
     files: [{ path: 'a.png', md5: 'aaa' }]
   }));
 
-  tool.updateSrcPngJson(TEST_ROOT, 'b.jpg', 'bbb');
-  tool.updateSrcPngJson(TEST_ROOT, 'a.png', 'aaa2');
+  tool.updateSrcPngJson(TEST_ROOT, 'b.jpg', 'bbb', 'bbb2');
+  tool.updateSrcPngJson(TEST_ROOT, 'a.png', 'aaa2', 'aaa3');
 
   const data = JSON.parse(fs.readFileSync(path.join(TEST_ROOT, 'SRC_PNG.json'), 'utf8'));
-  const byPath = Object.fromEntries(data.files.map(f => [f.path, f.md5]));
-  assert.strictEqual(byPath['a.png'], 'aaa2');
-  assert.strictEqual(byPath['b.jpg'], 'bbb');
+  const byPath = Object.fromEntries(data.files.map(f => [f.path, f]));
+  assert.deepStrictEqual(byPath['a.png'], { path: 'a.png', md5: 'aaa2', md52: 'aaa3' });
+  assert.deepStrictEqual(byPath['b.jpg'], { path: 'b.jpg', md5: 'bbb', md52: 'bbb2' });
 });
 
 test('copyOutputsToSource copies compressed files back to source directory', () => {

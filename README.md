@@ -169,3 +169,21 @@ https://tinify.com/developers/reference/http
     node TinyPNGTools.js -h
 
 该命令只打印帮助信息，不会读取 `config.json`，也不会执行压缩或清理操作。
+
+## SRC_PNG.json
+
+`SRC_PNG.json` 用来记录已经处理过的文件内容哈希。新格式中每个文件最多有两个 MD5 值：
+
+    {
+      "files": [
+        {
+          "path": "GameFramework\\Res\\FairyGui\\ResCommon_atlas0.png",
+          "md5": "压缩前文件内容MD5",
+          "md52": "压缩后文件内容MD5"
+        }
+      ]
+    }
+
+判断是否需要压缩时，工具会把当前文件内容 MD5 与 `md5`、`md52` 任意一个值比较；只要命中其中一个，就判定不需要重新压缩。旧数据只有 `md5` 时仍然兼容，只比较 `md5`。
+
+文件压缩完成后，工具会将压缩前内容 MD5 写入 `md5`，将压缩后内容 MD5 写入 `md52`。
