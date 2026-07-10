@@ -291,7 +291,7 @@ function entryMatchesMd5(entry, md5) {
   if (!entry || !md5) {
     return false;
   }
-  return entry.md5 === md5 || entry.md52 === md5;
+  return entry.src_md5 === md5 || entry.out_md5 === md5;
 }
 
 // 安全读取 SRC_PNG.json，文件不存在或格式损坏时返回空列表
@@ -339,20 +339,28 @@ function syncSourceToWorkDirs(baseDir, sourceDir, extensions, ignoreSet) {
 
   for (const entry of todo.files) {
     const srcPngEntry = srcPngMap.get(entry.path);
-    if (!entryMatchesMd5(srcPngEntry, entry.md5)) {
+    const srcFile = path.join(sourceDir, entry.path);
+    const dstFile = path.join(baseDir, WORK_DIRS.src, entry.path);
+    const outFile = path.join(baseDir, WORK_DIRS.out, entry.path);
+
+    if (entryMatchesMd5(srcPngEntry, entry.md5) && fs.existsSync(outFile) && fs.statSync(outFile).isFile()) {
+      ensureParentDir(dstFile);
+      fs.copyFileSync(srcFile, dstFile);
+      ensureParentDir(srcFile);
+      fs.copyFileSync(outFile, srcFile);
+      continue;
+    }
+
+    if (!entryMatchesMd5(srcPngEntry, entry.md5) || !fs.existsSync(outFile) || !fs.statSync(outFile).isFile()) {
       if (ignoreSet && ignoreSet.has(entry.path)) {
-        const outFile = path.join(baseDir, WORK_DIRS.out, entry.path);
         if (fs.existsSync(outFile)) {
           fs.rmSync(outFile, { force: true });
         }
         continue;
       }
-      const srcFile = path.join(sourceDir, entry.path);
-      const dstFile = path.join(baseDir, WORK_DIRS.src, entry.path);
       ensureParentDir(dstFile);
       fs.copyFileSync(srcFile, dstFile);
 
-      const outFile = path.join(baseDir, WORK_DIRS.out, entry.path);
       if (fs.existsSync(outFile)) {
         fs.rmSync(outFile, { force: true });
       }
@@ -365,14 +373,16 @@ function syncSourceToWorkDirs(baseDir, sourceDir, extensions, ignoreSet) {
 }
 
 // 更新 SRC_PNG.json 中指定路径文件的 MD5 记录（新增或覆盖）
-function updateSrcPngJson(baseDir, relativePath, md5, md52) {
+function updateSrcPngJson(baseDir, relativePath, srcMd5, outMd5) {
   const data = readSrcPngJson(baseDir);
   const existing = data.files.findIndex(f => f.path === relativePath);
   if (existing >= 0) {
-    data.files[existing].md5 = md5;
-    data.files[existing].md52 = md52;
+    data.files[existing].src_md5 = srcMd5;
+    data.files[existing].out_md5 = outMd5;
+    delete data.files[existing].md5;
+    delete data.files[existing].md52;
   } else {
-    data.files.push({ path: relativePath, md5, md52 });
+    data.files.push({ path: relativePath, src_md5: srcMd5, out_md5: outMd5 });
   }
   fs.writeFileSync(path.join(baseDir, 'SRC_PNG.json'), JSON.stringify(data, null, 2), 'utf8');
 }

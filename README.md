@@ -2,7 +2,7 @@
 
  TinyPNGTools 是一个用 TinyPNG/Tinify HTTP API 批量压缩图片的 Node.js 命令行工具。
  
- TinyPNGTools 纯AI实现 SuperPowers + DeepSeek v4 pro
+ TinyPNGTools 基于SuperPowers+DeepSeek v4 pro实现,烧了大概3000万token
 
 ### 普通模式:
     node TinyPNGTools.js
@@ -18,7 +18,7 @@
 - 该模式只处理 todo.json 与 SRC_PNG.json 对比后得到的差异文件。
 - "D:\my-images\ignore.json"里指定的被忽略的文件不会进入压缩流程。
  
- ### 命令支持
+### 命令支持
 - node TinyPNGTools.js
 - node TinyPNGTools.js --source <dir> [--ignore <path>]
 - node TinyPNGTools.js clear
@@ -172,18 +172,22 @@ https://tinify.com/developers/reference/http
 
 ## SRC_PNG.json
 
-`SRC_PNG.json` 用来记录已经处理过的文件内容哈希。新格式中每个文件最多有两个 MD5 值：
+`SRC_PNG.json` 用来记录已经处理过的文件内容哈希。每个文件记录两个 MD5 值：
 
     {
       "files": [
         {
           "path": "GameFramework\\Res\\FairyGui\\ResCommon_atlas0.png",
-          "md5": "压缩前文件内容MD5",
-          "md52": "压缩后文件内容MD5"
+          "src_md5": "压缩前文件内容MD5",
+          "out_md5": "压缩后文件内容MD5"
         }
       ]
     }
 
-判断是否需要压缩时，工具会把当前文件内容 MD5 与 `md5`、`md52` 任意一个值比较；只要命中其中一个，就判定不需要重新压缩。旧数据只有 `md5` 时仍然兼容，只比较 `md5`。
+判断是否需要压缩时，工具会把当前文件内容 MD5 与 `src_md5`、`out_md5` 任意一个值比较。
 
-文件压缩完成后，工具会将压缩前内容 MD5 写入 `md5`，将压缩后内容 MD5 写入 `md52`。
+在 `--source` 模式下，如果当前文件内容 MD5 命中 `src_md5` 或 `out_md5`，并且 `OUT_PNG` 中存在同相对路径文件，工具会跳过 Tinify 压缩流程：先把源目录文件复制到工作目录 `SRC_PNG`，再把 `OUT_PNG` 中的缓存文件复制回外部源目录。
+
+如果 MD5 命中但 `OUT_PNG` 中没有同相对路径文件，该文件仍会进入压缩流程。
+
+文件压缩完成后，工具会将压缩前内容 MD5 写入 `src_md5`，将压缩后内容 MD5 写入 `out_md5`。

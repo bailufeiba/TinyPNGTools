@@ -377,8 +377,8 @@ test('compressSourceFile records source and output md5 values', async () => {
   const entry = data.files.find((item) => item.path === 'manifest.png');
   assert.deepStrictEqual(entry, {
     path: 'manifest.png',
-    md5: md5('source-image'),
-    md52: md5('compressed:source-image'),
+    src_md5: md5('source-image'),
+    out_md5: md5('compressed:source-image'),
   });
 });
 
@@ -583,28 +583,55 @@ test('syncSourceToWorkDirs copies changed files and clears old outputs', () => {
   assert.strictEqual(fs.existsSync(path.join(TEST_ROOT, 'todo.json')), true);
 });
 
-test('syncSourceToWorkDirs skips files whose md5 matches md52 manifest value', () => {
-  const sourceDir = path.join(TEST_ROOT, 'SRC_PNG');
-  writeFile(path.join('SRC_PNG', 'already-compressed.png'), 'compressed-content');
-  writeFile(path.join('OUT_PNG', 'already-compressed.png'), 'keep-output');
+test('syncSourceToWorkDirs copies cached output to source when src md5 matches and output exists', () => {
+  const sourceDir = path.join(TEST_ROOT, 'EXTERNAL_SRC_CACHE');
+  removeDir(sourceDir);
+  fs.mkdirSync(sourceDir, { recursive: true });
+  const sourceFile = path.join(sourceDir, 'already-compressed.png');
+  fs.writeFileSync(sourceFile, 'source-content');
+  writeFile(path.join('OUT_PNG', 'already-compressed.png'), 'compressed-output');
 
   fs.writeFileSync(path.join(TEST_ROOT, 'SRC_PNG.json'), JSON.stringify({
     files: [{
       path: 'already-compressed.png',
-      md5: '00000000000000000000000000000000',
-      md52: md5('compressed-content')
+      src_md5: md5('source-content'),
+      out_md5: md5('compressed-output')
     }]
   }));
 
   const result = tool.syncSourceToWorkDirs(TEST_ROOT, sourceDir, ['.png']);
 
   assert.deepStrictEqual(result.changedFiles, []);
-  assert.strictEqual(fs.readFileSync(path.join(TEST_ROOT, 'OUT_PNG', 'already-compressed.png'), 'utf8'), 'keep-output');
+  assert.strictEqual(fs.readFileSync(sourceFile, 'utf8'), 'compressed-output');
+  assert.strictEqual(fs.readFileSync(path.join(TEST_ROOT, 'SRC_PNG', 'already-compressed.png'), 'utf8'), 'source-content');
+  removeDir(sourceDir);
+});
+
+test('syncSourceToWorkDirs compresses matched manifest files when cached output is missing', () => {
+  const sourceDir = path.join(TEST_ROOT, 'EXTERNAL_SRC_NO_CACHE');
+  removeDir(sourceDir);
+  fs.mkdirSync(sourceDir, { recursive: true });
+  const sourceFile = path.join(sourceDir, 'missing-output.png');
+  fs.writeFileSync(sourceFile, 'source-content');
+
+  fs.writeFileSync(path.join(TEST_ROOT, 'SRC_PNG.json'), JSON.stringify({
+    files: [{
+      path: 'missing-output.png',
+      src_md5: md5('source-content'),
+      out_md5: '00000000000000000000000000000000'
+    }]
+  }));
+
+  const result = tool.syncSourceToWorkDirs(TEST_ROOT, sourceDir, ['.png']);
+
+  assert.deepStrictEqual(result.changedFiles, ['missing-output.png']);
+  assert.strictEqual(fs.readFileSync(path.join(TEST_ROOT, 'SRC_PNG', 'missing-output.png'), 'utf8'), 'source-content');
+  removeDir(sourceDir);
 });
 
 test('updateSrcPngJson adds new entry and updates existing', () => {
   fs.writeFileSync(path.join(TEST_ROOT, 'SRC_PNG.json'), JSON.stringify({
-    files: [{ path: 'a.png', md5: 'aaa' }]
+    files: [{ path: 'a.png', src_md5: 'aaa' }]
   }));
 
   tool.updateSrcPngJson(TEST_ROOT, 'b.jpg', 'bbb', 'bbb2');
@@ -612,8 +639,8 @@ test('updateSrcPngJson adds new entry and updates existing', () => {
 
   const data = JSON.parse(fs.readFileSync(path.join(TEST_ROOT, 'SRC_PNG.json'), 'utf8'));
   const byPath = Object.fromEntries(data.files.map(f => [f.path, f]));
-  assert.deepStrictEqual(byPath['a.png'], { path: 'a.png', md5: 'aaa2', md52: 'aaa3' });
-  assert.deepStrictEqual(byPath['b.jpg'], { path: 'b.jpg', md5: 'bbb', md52: 'bbb2' });
+  assert.deepStrictEqual(byPath['a.png'], { path: 'a.png', src_md5: 'aaa2', out_md5: 'aaa3' });
+  assert.deepStrictEqual(byPath['b.jpg'], { path: 'b.jpg', src_md5: 'bbb', out_md5: 'bbb2' });
 });
 
 test('copyOutputsToSource copies compressed files back to source directory', () => {
