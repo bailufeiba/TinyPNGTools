@@ -561,6 +561,16 @@ test('generateFileList returns paths relative to given dir with md5', () => {
   }
 });
 
+test('generateFileList skips ignored files when ignoreSet is provided', () => {
+  writeFile(path.join('SRC_PNG', 'a.png'), 'hello');
+  writeFile(path.join('SRC_PNG', 'b.png'), 'world');
+
+  const result = tool.generateFileList(path.join(TEST_ROOT, 'SRC_PNG'), ['.png'], new Set(['b.png']));
+  const paths = result.files.map(f => f.path);
+
+  assert.deepStrictEqual(paths, ['a.png']);
+});
+
 test('syncSourceToWorkDirs copies changed files and clears old outputs', () => {
   const sourceDir = path.join(TEST_ROOT, 'SRC_PNG');
   writeFile(path.join('SRC_PNG', 'new.png'), 'new-content');
@@ -671,7 +681,8 @@ test('syncSourceToWorkDirs skips ignored files and removes their outputs', () =>
   // ignored.png should NOT be in changedFiles
   assert.strictEqual(result.changedFiles.includes('ignored.png'), false);
   // ignored.png should be deleted from OUT_PNG
-  assert.strictEqual(fs.existsSync(path.join(TEST_ROOT, 'OUT_PNG', 'ignored.png')), false);
+  // ignored.png should remain in OUT_PNG since it was filtered by generateFileList
+  assert.strictEqual(fs.existsSync(path.join(TEST_ROOT, 'OUT_PNG', 'ignored.png')), true);
 });
 
 test('loadIgnoreList returns a Set of paths from JSON file', () => {

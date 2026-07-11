@@ -275,8 +275,9 @@ async function runQueue(items, concurrency, worker) {
 }
 
 // 递归扫描目录生成文件清单，包含相对路径和文件内容的 MD5 哈希
-function generateFileList(dirPath, extensions) {
-  const files = scanImages(dirPath, extensions);
+function generateFileList(dirPath, extensions, ignoreSet) {
+  const scanned = scanImages(dirPath, extensions);
+  const files = ignoreSet ? scanned.filter(fullPath => !ignoreSet.has(path.relative(dirPath, fullPath))) : scanned;
   return {
     files: files.map(fullPath => {
       const relative = path.relative(dirPath, fullPath);
@@ -329,7 +330,7 @@ function loadIgnoreList(ignorePath) {
 
 // --source 同步模式：对比源目录与 SRC_PNG.json 的差异，复制变化文件，清理过期输出
 function syncSourceToWorkDirs(baseDir, sourceDir, extensions, ignoreSet) {
-  const todo = generateFileList(sourceDir, extensions);
+  const todo = generateFileList(sourceDir, extensions, ignoreSet);
   fs.writeFileSync(path.join(baseDir, 'todo.json'), JSON.stringify(todo, null, 2), 'utf8');
 
   const srcPng = readSrcPngJson(baseDir);
