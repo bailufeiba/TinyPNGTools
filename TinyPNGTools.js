@@ -171,7 +171,7 @@ function getRelativePath(baseDir, folderName, filePath) {
   const rootPath = path.resolve(baseDir, folderName);
   const candidatePath = path.resolve(filePath);
   assertInsidePath(rootPath, candidatePath);
-  return path.relative(rootPath, candidatePath);
+  return path.relative(rootPath, candidatePath).replace(/\\/g, '/');
 }
 
 // 将相对路径映射到某个工作目录下的完整输出路径，带越界保护
@@ -281,10 +281,10 @@ async function runQueue(items, concurrency, worker) {
 // 递归扫描目录生成文件清单，包含相对路径和文件内容的 MD5 哈希
 function generateFileList(dirPath, extensions, ignoreSet) {
   const scanned = scanImages(dirPath, extensions);
-  const files = ignoreSet ? scanned.filter(fullPath => !ignoreSet.has(path.relative(dirPath, fullPath))) : scanned;
+  const files = ignoreSet ? scanned.filter(fullPath => !ignoreSet.has(path.relative(dirPath, fullPath).replace(/\\/g, '/'))) : scanned;
   return {
     files: files.map(fullPath => {
-      const relative = path.relative(dirPath, fullPath);
+      const relative = path.relative(dirPath, fullPath).replace(/\\/g, '/');
       const content = fs.readFileSync(fullPath);
       const md5 = crypto.createHash('md5').update(content).digest('hex');
       return { path: relative, md5 };
@@ -310,6 +310,10 @@ function readSrcPngJson(baseDir) {
     if (!data || !Array.isArray(data.files)) {
       return { files: [] };
     }
+    // 标准化存储路径为正斜杠，保持跨平台一致
+    for (const f of data.files) {
+      f.path = f.path.replace(/\\/g, '/');
+    }
     return data;
   } catch (e) {
     return { files: [] };
@@ -326,7 +330,7 @@ function loadIgnoreList(ignorePath) {
     if (!data || !Array.isArray(data.ignore)) {
       return new Set();
     }
-    return new Set(data.ignore);
+    return new Set(data.ignore.map(p => p.replace(/\\/g, '/')));
   } catch (e) {
     return new Set();
   }
@@ -625,7 +629,14 @@ function clearDirectory(dirPath) {
 function resetIgnoredFiles(baseDir, ignoreSet) {
   if (!ignoreSet || ignoreSet.size===0) return;
   const data=readSrcPngJson(baseDir);
-  data.files=data.files.filter(f=>{if(ignoreSet.has(f.path)){const outFile=path.join(baseDir,WORK_DIRS.out,f.path);if(fs.existsSync(outFile))fs.rmSync(outFile,{force:true});return false;}return true;});
+  data.files=data.files.filter(f=>{
+    if(ignoreSet.has(f.path)){
+      const outFile=path.join(baseDir,WORK_DIRS.out,f.path);
+      if(fs.existsSync(outFile))fs.rmSync(outFile,{force:true});
+      return false;
+    }
+    return true;
+  });
   fs.writeFileSync(path.join(baseDir,'SRC_PNG.json'),JSON.stringify(data,null,2),'utf8');
 }
 
