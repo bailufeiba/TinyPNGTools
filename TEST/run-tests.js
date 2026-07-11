@@ -1,4 +1,4 @@
-const assert = require('assert');
+﻿const assert = require('assert');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -60,6 +60,7 @@ test('exports required functions', () => {
   assert.strictEqual(typeof tool.copyOutputsToSource, 'function');
   assert.strictEqual(typeof tool.loadIgnoreList, 'function');
   assert.strictEqual(typeof tool.clearCache, 'function');
+  assert.strictEqual(typeof tool.generateTodoList, 'function');
   assert.strictEqual(typeof tool.formatHelp, 'function');
 });
 
@@ -199,7 +200,7 @@ test('skips source only when output path is a file, not a directory', () => {
   writeFile(path.join('SRC_PNG', 'x.png'), 'x');
   writeFile(path.join('SRC_PNG', 'y.png'), 'y');
   writeFile(path.join('OUT_PNG', 'y.png'), 'compressed');
-  // Create a directory at the expected output path for x.png — should still be pending
+  // Create a directory at the expected output path for x.png �?should still be pending
   fs.mkdirSync(path.join(TEST_ROOT, 'OUT_PNG', 'x.png'), { recursive: true });
 
   const pending = tool.collectPendingSourceFiles(TEST_ROOT, ['.png']).map((item) =>
@@ -701,6 +702,49 @@ test('loadIgnoreList returns empty Set when file is missing', () => {
   assert.strictEqual(set.size, 0);
 });
 
+
+test('generateTodoList writes diff files to todo.json and skips matched files', () => {
+  writeFile(path.join('SRC_PNG', 'new.png'), 'new-content');
+  writeFile(path.join('SRC_PNG', 'same.png'), 'same-content');
+  fs.writeFileSync(path.join(TEST_ROOT, 'SRC_PNG.json'), JSON.stringify({
+    files: [{ path: 'same.png', src_md5: md5('same-content'), out_md5: 'xxx' }]
+  }));
+  const todo = tool.generateTodoList(TEST_ROOT, path.join(TEST_ROOT, 'SRC_PNG'), ['.png']);
+  assert.deepStrictEqual(todo.files.map(f => f.path), ['new.png']);
+  assert.strictEqual(exists('todo.json'), true);
+  const written = JSON.parse(fs.readFileSync(path.join(TEST_ROOT, 'todo.json'), 'utf8'));
+  assert.deepStrictEqual(written.files.map(f => f.path), ['new.png']);
+});
+
+test('generateTodoList returns empty list when all files match', () => {
+  writeFile(path.join('SRC_PNG', 'a.png'), 'aaa');
+  fs.writeFileSync(path.join(TEST_ROOT, 'SRC_PNG.json'), JSON.stringify({
+    files: [{ path: 'a.png', src_md5: md5('aaa'), out_md5: 'yyy' }]
+  }));
+  const todo = tool.generateTodoList(TEST_ROOT, path.join(TEST_ROOT, 'SRC_PNG'), ['.png']);
+  assert.deepStrictEqual(todo.files, []);
+  assert.strictEqual(exists('todo.json'), true);
+});
+
+test('generateTodoList matches out_md5 as well', () => {
+  writeFile(path.join('SRC_PNG', 'b.png'), 'bbb');
+  fs.writeFileSync(path.join(TEST_ROOT, 'SRC_PNG.json'), JSON.stringify({
+    files: [{ path: 'b.png', src_md5: 'zzz', out_md5: md5('bbb') }]
+  }));
+  const todo = tool.generateTodoList(TEST_ROOT, path.join(TEST_ROOT, 'SRC_PNG'), ['.png']);
+  assert.deepStrictEqual(todo.files, []);
+});
+
+
+
+test('generateTodoList skips ignored files', () => {
+  writeFile(path.join('SRC_PNG', 'keep.png'), 'keep-content');
+  writeFile(path.join('SRC_PNG', 'skip.png'), 'skip-content');
+  fs.writeFileSync(path.join(TEST_ROOT, 'SRC_PNG.json'), JSON.stringify({ files: [] }));
+  const ignoreSet = new Set(['skip.png']);
+  const todo = tool.generateTodoList(TEST_ROOT, path.join(TEST_ROOT, 'SRC_PNG'), ['.png'], ignoreSet);
+  assert.deepStrictEqual(todo.files.map(f => f.path), ['keep.png']);
+});
 
 async function run() {
   let passed = 0;

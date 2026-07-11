@@ -1,4 +1,4 @@
-# TinyPNGTools 
+﻿# TinyPNGTools 
 
  TinyPNGTools 是一个用 TinyPNG/Tinify HTTP API 批量压缩图片的 Node.js 命令行工具。
  
@@ -22,6 +22,7 @@
 - node TinyPNGTools.js
 - node TinyPNGTools.js --source <dir> [--ignore <path>]
 - node TinyPNGTools.js clear
+- node TinyPNGTools.js todolist [sourceDir] [--ignore <path>]
 - node TinyPNGTools.js --help
 - node TinyPNGTools.js -h
 
@@ -157,6 +158,29 @@ https://tinify.com/developers/reference/http
     }
 
 输入其他内容会取消操作，不会清空缓存。
+
+
+## todolist 
+
+生成待办列表，扫描指定目录（默认 SRC_PNG），与 SRC_PNG.json 对比，将差异文件写入 `todo.json` 并输出。
+
+    node TinyPNGTools.js todolist
+
+扫描 SRC_PNG 目录：
+
+    node TinyPNGTools.js todolist
+
+扫描外部源目录并忽略指定文件：
+
+    node TinyPNGTools.js todolist D:\my-images --ignore D:\my-images\ignore.json
+
+该命令会：
+
+- 扫描源目录中所有支持的图片文件
+- 计算每个文件内容的 MD5
+- 与 SRC_PNG.json 中的 src_md5 / out_md5 对比
+- 将 MD5 不匹配的文件列表写入 `todo.json`
+- 在控制台输出 `todo.json` 的内容
 
 ## help 命令
 

@@ -1,4 +1,4 @@
-// TinyPNGTools - 基于 TinyPNG/Tinify HTTP API 的图片批量压缩命令行工具
+﻿// TinyPNGTools - 基于 TinyPNG/Tinify HTTP API 的图片批量压缩命令行工具
 // 用法: node TinyPNGTools.js [--source <dir>] [--ignore <path>]
 
 const fs = require('fs');
@@ -112,14 +112,18 @@ function formatHelp() {
     '  node TinyPNGTools.js',
     '  node TinyPNGTools.js --source <dir> [--ignore <path>]',
     '  node TinyPNGTools.js clear',
+    '  node TinyPNGTools.js todolist [sourceDir] [--ignore <path>]',
     '  node TinyPNGTools.js --help',
+    '  node TinyPNGTools.js reset-ignore <path>',
     '',
     'Commands:',
     '  default                 Compress pending images from SRC_PNG to OUT_PNG.',
     '  --source <dir>          Sync changed files from an external source directory.',
     '  --ignore <path>         Ignore paths listed in a JSON file when using --source.',
     '  clear                   Clear SRC_PNG, OUT_PNG, RETRY_PNG, FAIL_PNG, delete todo.json, reset SRC_PNG.json.',
+    '  todolist [sourceDir] [--ignore <path>]  Scan directory and write diff to todo.json (defaults to SRC_PNG).',
     '  --help, -h              Show this help.',
+    '  reset-ignore <path>     Reset ignored files: delete from OUT_PNG and remove from SRC_PNG.json.',
   ].join('\n');
 }
 
@@ -327,6 +331,21 @@ function loadIgnoreList(ignorePath) {
     return new Set();
   }
 }
+// 生成待办列表：扫描源目录，与 SRC_PNG.json 对比，将差异文件写入 todo.json
+function generateTodoList(baseDir, sourceDir, extensions, ignoreSet) {
+  const todo = generateFileList(sourceDir, extensions, ignoreSet);
+  const srcPng = readSrcPngJson(baseDir);
+  const srcPngMap = new Map(srcPng.files.map(f => [f.path, f]));
+
+  const diffFiles = todo.files.filter(entry => {
+    const srcPngEntry = srcPngMap.get(entry.path);
+    return !entryMatchesMd5(srcPngEntry, entry.md5);
+  });
+
+  const result = { files: diffFiles };
+  fs.writeFileSync(path.join(baseDir, 'todo.json'), JSON.stringify(result, null, 2), 'utf8');
+  return result;
+}
 
 // --source 同步模式：对比源目录与 SRC_PNG.json 的差异，复制变化文件，清理过期输出
 function syncSourceToWorkDirs(baseDir, sourceDir, extensions, ignoreSet) {
@@ -491,6 +510,13 @@ async function main() {
     return;
   }
 
+  if (process.argv[2] === 'reset-ignore' && process.argv[3]) {
+    const ignoreSet=loadIgnoreList(path.resolve(process.argv[3]));
+    resetIgnoredFiles(baseDir,ignoreSet);
+    console.log('已重置忽略文件: '+process.argv[3]);
+    return;
+  }
+
   if (process.argv[2] === 'clear') {
     const confirmed = await askYesNo('是否清空所有缓存？该行为会导致后续所有PNG重新压缩');
     if (!confirmed) {
@@ -499,6 +525,27 @@ async function main() {
     }
     clearCache(baseDir);
     console.log('缓存已清空。');
+    return;
+  }
+
+  if (process.argv[2] === 'todolist') {
+    const config = loadConfig(baseDir);
+    let todolistSourceDir = path.join(baseDir, WORK_DIRS.src);
+    let todolistIgnorePath = null;
+    for (let i = 3; i < process.argv.length; i += 1) {
+      if (process.argv[i] === '--ignore' && i + 1 < process.argv.length) {
+        todolistIgnorePath = path.resolve(process.argv[i + 1]);
+        i += 1;
+      } else if (!process.argv[i].startsWith('--')) {
+        todolistSourceDir = path.resolve(process.argv[i]);
+      }
+    }
+    if (!fs.existsSync(todolistSourceDir)) {
+      throw new Error("源目录不存在: " + todolistSourceDir);
+    }
+    const ignoreSet = todolistIgnorePath ? loadIgnoreList(todolistIgnorePath) : undefined;
+    const todo = generateTodoList(baseDir, todolistSourceDir, config.extensions, ignoreSet);
+    console.log(JSON.stringify(todo, null, 2));
     return;
   }
 
@@ -573,6 +620,13 @@ async function main() {
 function clearDirectory(dirPath) {
   fs.rmSync(dirPath, { recursive: true, force: true });
   fs.mkdirSync(dirPath, { recursive: true });
+}
+
+function resetIgnoredFiles(baseDir, ignoreSet) {
+  if (!ignoreSet || ignoreSet.size===0) return;
+  const data=readSrcPngJson(baseDir);
+  data.files=data.files.filter(f=>{if(ignoreSet.has(f.path)){const outFile=path.join(baseDir,WORK_DIRS.out,f.path);if(fs.existsSync(outFile))fs.rmSync(outFile,{force:true});return false;}return true;});
+  fs.writeFileSync(path.join(baseDir,'SRC_PNG.json'),JSON.stringify(data,null,2),'utf8');
 }
 
 function clearCache(baseDir) {
@@ -713,6 +767,7 @@ module.exports = {
   removeEmptyParents,
   clearDirectory,
   clearCache,
+  resetIgnoredFiles,
   hasRetryFiles,
   compressSourceFile,
   compressRetryFile,
@@ -724,6 +779,7 @@ module.exports = {
   updateSrcPngJson,
   copyOutputsToSource,
   loadIgnoreList,
+  generateTodoList,
 };
 
 if (require.main === module) {
