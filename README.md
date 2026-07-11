@@ -1,217 +1,268 @@
-﻿# TinyPNGTools 
+﻿# TinyPNGTools
 
- TinyPNGTools 是一个用 TinyPNG/Tinify HTTP API 批量压缩图片的 Node.js 命令行工具。
- 
- TinyPNGTools 基于SuperPowers+DeepSeek v4 pro实现,烧了大概3000万token
+TinyPNGTools 是一个基于 [TinyPNG / Tinify HTTP API](https://tinify.com/developers) 的批量图片压缩命令行工具，使用纯 Node.js 实现。
 
-### 普通模式:
-    node TinyPNGTools.js
-- 工具会读取当前工具目录下 SRC_PNG 中的图片，上传到 TinyPNG 服务器压缩，再把结果下载到 OUT_PNG。
-- 输出文件的相对路径和文件名会与 SRC_PNG 保持一致。
-- 成功后会更新SRC_PNG.json
+支持 `.png`、`.jpg`、`.jpeg`、`.webp` 格式，具备递归扫描、并发压缩、断点续处理、自动重试、失败隔离等能力。
 
+---
 
- ### source模式:
-    node TinyPNGTools.js --source D:\my-images --ignore D:\my-images\ignore.json
-- 指向一个外部图片目录，工具自动检测新增和修改的文件，压缩后回写。
-- 工具会生成 todo.json 记录源目录文件信息，与 SRC_PNG.json 比较差异。只有新增或 MD5 变化的文件才会进入压缩流程。压缩完成后，结果自动复制回源目录，并删除 todo.json。
-- 该模式只处理 todo.json 与 SRC_PNG.json 对比后得到的差异文件。
-- "D:\my-images\ignore.json"里指定的被忽略的文件不会进入压缩流程。
- 
-### 命令支持
-- node TinyPNGTools.js
-- node TinyPNGTools.js --source <dir> [--ignore <path>]
-- node TinyPNGTools.js clear
-- node TinyPNGTools.js todolist [sourceDir] [--ignore <path>]
-- node TinyPNGTools.js --help
-- node TinyPNGTools.js -h
+## 目录
 
- TinyPng地址 https://tinypng.com/
- 
- TinyPng API申请 https://tinify.com/developers
- 
- TinyPng API文档 https://tinify.com/developers/reference/http
+- [配置](#配置)
+- [使用方式](#使用方式)
+- [命令参考](#命令参考)
+- [目录结构](#目录结构)
+- [工作流程](#工作流程)
+- [未完成任务处理](#未完成任务处理)
+- [自动测试](#自动测试)
+- [相关链接](#相关链接)
 
-## 功能
-
-- 支持 .png、.jpg、.jpeg、.webp
-- 支持递归扫描子目录
-- 支持批量并发压缩，默认并发 5
-- 支持断点续处理：OUT_PNG 已存在的同路径文件会跳过
-- 支持失败文件进入 RETRY_PNG
-- 支持自动重试，默认重试 3 次
-- 重试失败后进入 FAIL_PNG
-- 支持 --source 指向外部源目录，按差异同步压缩
-- 支持 --ignore 排除指定文件
-- 自动测试固定运行在 TEST 目录，不影响真实图片目录
-
-## 目录结构
-
-正式运行目录：
-
-    SRC_PNG
-    OUT_PNG
-    RETRY_PNG
-    FAIL_PNG
-
-自动测试目录：
-
-    TEST/SRC_PNG
-    TEST/OUT_PNG
-    TEST/RETRY_PNG
-    TEST/FAIL_PNG
+---
 
 ## 配置
 
-API KEY 申请地址 https://tinify.com/developers
+复制 `config.example.json` 为 `config.json`，填写你的 TinyPNG API Key：
 
-复制 config.example.json 为 config.json，然后填写自己的 TinyPNG API Key。
+```json
+{
+  "apiKey": "YOUR_API_KEY",
+  "concurrency": 5,
+  "extensions": [".png", ".jpg", ".jpeg", ".webp"],
+  "maxRetries": 3
+}
+```
 
-    {
-      "apiKey": "TinyPNG_API_KEY",
-      "concurrency": 5,
-      "extensions": [".png", ".jpg", ".jpeg", ".webp"],
-      "maxRetries": 3
-    }
+| 字段 | 说明 |
+|------|------|
+| `apiKey` | TinyPNG API Key，从 [Tinify Developers](https://tinify.com/developers) 申请 |
+| `concurrency` | 并发压缩数，默认 `5` |
+| `extensions` | 支持的图片扩展名 |
+| `maxRetries` | 单文件最大重试次数，默认 `3` |
 
-## 运行
+---
+
+## 使用方式
 
 ### 基础模式
 
-把需要压缩的图片放入 SRC_PNG，然后运行:
+将待压缩图片放入 `SRC_PNG`，运行：
 
-    node TinyPNGTools.js
+```
+node TinyPNGTools.js
+```
 
-所有流程完成后会输出 TinyPNG_ALL_COMPLETED。
+工具会递归扫描 `SRC_PNG` 中的图片，上传压缩后将结果写入 `OUT_PNG`，保持相对路径一致。
 
-### 源目录同步模式
+### 源目录同步模式（`--source`）
 
-指向一个外部图片目录，工具自动检测新增和修改的文件，压缩后回写。
+指向外部图片目录，自动检测新增和修改的文件，压缩后回写：
 
-    node TinyPNGTools.js --source D:\my-images
+```
+node TinyPNGTools.js --source D:\my-images
+```
 
-工具会生成 todo.json 记录源目录文件信息，与 SRC_PNG.json 比较差异。只有新增或 MD5 变化的文件才会进入压缩流程。压缩完成后，结果自动复制回源目录，并删除 todo.json。
+- 生成 `todo.json` 记录源目录文件信息，与 `SRC_PNG.json` 对比差异
+- 仅压缩新增或 **MD5 变化** 的文件
+- 压缩完成后结果自动复制回源目录，删除 `todo.json`
+- 启动时直接清空 `RETRY_PNG`，不会询问重试
 
---source 模式启动时会直接清空 RETRY_PNG，不再询问是否重试，也不会处理 RETRY_PNG 中遗留的文件。该模式只处理 todo.json 与 SRC_PNG.json 对比后得到的差异文件。
+#### 忽略文件
 
-### 忽略文件
+在同步模式下，可指定忽略列表排除某些文件：
 
-在同步模式下，可以指定一个忽略 JSON 排除某些文件。
+```
+node TinyPNGTools.js --source D:\my-images --ignore D:\my-images\ignore.json
+```
 
-    node TinyPNGTools.js --source D:\my-images --ignore D:\my-images\ignore.json
+`ignore.json` 格式（路径相对于源目录）：
 
-ignore.json 格式：
+```json
+{
+  "ignore": ["nested/photo.png"]
+}
+```
 
+---
+
+## 命令参考
+
+| 命令 | 说明 |
+|------|------|
+| `node TinyPNGTools.js` | 基础模式：压缩 `SRC_PNG` 到 `OUT_PNG` |
+| `node TinyPNGTools.js --source <dir> [--ignore <path>]` | 同步模式：压缩外部目录差异文件 |
+| `node TinyPNGTools.js clear` | 清空所有缓存，强制重新压缩 |
+| `node TinyPNGTools.js todolist [sourceDir] [--ignore <path>]` | 扫描目录生成差异列表，写入 `todo.json` |
+| `node TinyPNGTools.js reset-ignore <path>` | 重置已忽略文件：从 `OUT_PNG` 删除缓存并从 `SRC_PNG.json` 移除记录 |
+| `node TinyPNGTools.js --help` / `-h` | 查看帮助信息 |
+
+### clear 命令
+
+清空所有缓存并强制后续重新压缩全部图片。执行后会提示确认：
+
+```
+是否清空所有缓存？该行为会导致后续所有PNG重新压缩 (y/n):
+```
+
+确认后执行以下操作：
+
+- 清空并重建 `SRC_PNG`、`OUT_PNG`、`RETRY_PNG`、`FAIL_PNG`
+- 删除 `todo.json`
+- 将 `SRC_PNG.json` 重置为 `{ "files": [] }`
+
+### todolist 命令
+
+扫描指定目录（默认 `SRC_PNG`），与 `SRC_PNG.json` 对比，将差异文件写入 `todo.json` 并输出。
+
+```
+node TinyPNGTools.js todolist
+node TinyPNGTools.js todolist D:\my-images --ignore D:\my-images\ignore.json
+```
+
+执行流程：
+
+1. 扫描源目录中所有支持的图片文件
+2. 计算每个文件内容的 MD5
+3. 与 `SRC_PNG.json` 中的 `src_md5` / `out_md5` 对比
+4. 将 MD5 不匹配的文件列表写入 `todo.json`
+5. 在控制台输出 `todo.json` 的内容
+
+---
+
+## 目录结构
+
+### 正式运行目录
+
+```
+SRC_PNG/      源图片
+OUT_PNG/      压缩输出
+RETRY_PNG/    待重试
+FAIL_PNG/     重试失败
+```
+
+### 自动测试目录
+
+```
+TEST/SRC_PNG
+TEST/OUT_PNG
+TEST/RETRY_PNG
+TEST/FAIL_PNG
+```
+
+---
+
+## 工作流程
+
+### 启动流程
+
+1. 读取并校验 `config.json`
+2. 创建工作目录（正式或测试）
+3. 检查 `RETRY_PNG` 是否有待重试文件
+4. 进入重试流程或正常压缩流程
+
+### 正常压缩流程
+
+1. 递归扫描 `SRC_PNG` 中符合扩展名的图片
+2. 计算相对路径
+3. 若 `OUT_PNG` 已存在同路径文件，则跳过（断点续处理）
+4. 以 `concurrency` 控制并发数上传压缩
+5. 结果写入 `OUT_PNG` 对应路径
+
+### 断点续处理
+
+- `OUT_PNG` 中已存在的文件视为已完成，跳过
+- `RETRY_PNG` 中遗留的文件视为未完成失败项，启动时询问是否重试
+- `SRC_PNG` 有但 `OUT_PNG` 没有的文件视为未完成，继续压缩
+
+### 失败处理
+
+首次压缩失败时：
+
+1. 将 `SRC_PNG` 中的源文件复制到 `RETRY_PNG` 同路径
+2. 进入自动重试队列
+
+自动重试规则：
+
+- 最多重试 `maxRetries` 次（默认 3）
+- 重试成功：写入 `OUT_PNG`，删除 `RETRY_PNG` 对应文件
+- 重试耗尽：复制源文件到 `FAIL_PNG`，删除 `RETRY_PNG` 中对应文件
+
+### SRC_PNG.json
+
+记录已处理文件的 MD5 哈希：
+
+```json
+{
+  "files": [
     {
-      "ignore": [
-        "nested/photo.png"
-      ]
+      "path": "GameFramework/Res/FairyGui/ResCommon_atlas0.png",
+      "src_md5": "压缩前内容 MD5",
+      "out_md5": "压缩后内容 MD5"
     }
+  ]
+}
+```
 
-路径相对于源目录。被忽略的文件不会进入压缩流程。
+在 `--source` 模式下：
+
+- 若当前文件 MD5 命中 `src_md5` 或 `out_md5`，且 `OUT_PNG` 中存在同路径缓存文件，则跳过 Tinify 压缩，直接将缓存复制回源目录
+- 若 MD5 命中但 `OUT_PNG` 无缓存，仍进入压缩流程
+### reset-ignore 命令
+
+当某些文件被加入 `ignore.json` 不再需要压缩，但之前已在 `OUT_PNG` 中留有缓存且 `SRC_PNG.json` 中已有记录时，可用此命令清理：
+
+```
+node TinyPNGTools.js reset-ignore D:\my-images\ignore.json
+```
+
+执行后：
+
+- 读取 `ignore.json` 中列出的文件路径
+- 删除 `OUT_PNG` 中对应的缓存文件
+- 从 `SRC_PNG.json` 中移除这些文件的记录
+
+下次压缩时这些文件会被视为全新文件重新处理。
+
+---
+
+---
 
 ## 未完成任务处理
 
 ### 基础模式
 
-不使用 --source 时，如果启动时检测到 RETRY_PNG 中有文件，工具会询问是否重试。
+启动时若检测到 `RETRY_PNG` 中有文件，会询问是否重试：
 
-选择重试时：先压缩 RETRY_PNG 中的文件，重试成功后写入 OUT_PNG 并删除，然后继续处理 SRC_PNG 中尚未输出的文件。
-
-选择不重试时：只清空 RETRY_PNG，保留 OUT_PNG，然后继续处理 SRC_PNG 中尚未输出到 OUT_PNG 的文件。
+- **选择重试**：先压缩 `RETRY_PNG` 中的文件，成功后写入 `OUT_PNG` 并删除，再继续处理 `SRC_PNG` 中未输出的文件
+- **选择不重试**：只清空 `RETRY_PNG`，保留 `OUT_PNG`，继续处理 `SRC_PNG` 中未输出的文件
 
 ### --source 模式
 
-使用 --source 时，工具不会检测 RETRY_PNG 是否有文件，也不会询问是否重试。启动后会直接清空 RETRY_PNG，然后按源目录生成 todo.json，与 SRC_PNG.json 比较差异，只压缩差异文件。
+启动后直接清空 `RETRY_PNG`，不会询问重试。按源目录生成 `todo.json` 与 `SRC_PNG.json` 对比，只压缩差异文件。
+
+---
 
 ## 自动测试
 
-    node TEST\run-tests.js
+```
+node TEST\run-tests.js
+```
 
-自动测试只操作 TEST 目录下的四个图片目录，不会处理真实运行目录中的图片。
+自动测试仅操作 `TEST` 目录下的四个子目录，不会影响正式运行目录中的图片。
 
-## TinyPNG API 文档
+测试覆盖：
 
-https://tinify.com/developers/reference/http
+- 配置校验
+- 图片扩展名筛选
+- 相对路径映射
+- 断点续处理跳过逻辑
+- 失败文件复制到 `RETRY_PNG`
+- 重试成功后写入 `OUT_PNG` 并删除 `RETRY_PNG`
+- 重试失败后复制到 `FAIL_PNG` 并删除 `RETRY_PNG`
 
-## clear 命令
+---
 
-清空缓存并强制后续重新压缩全部 PNG：
+## 相关链接
 
-    node TinyPNGTools.js clear
-
-执行后工具会先提示：
-
-    是否清空所有缓存？该行为会导致后续所有PNG重新压缩 (y/n):
-
-只有输入 `y` 或 `yes` 才会继续执行。确认后会：
-
-- 清空并重建 `SRC_PNG`
-- 清空并重建 `OUT_PNG`
-- 清空并重建 `RETRY_PNG`
-- 清空并重建 `FAIL_PNG`
-- 删除 `todo.json`
-- 将 `SRC_PNG.json` 重置为：
-
-    {
-      "files": []
-    }
-
-输入其他内容会取消操作，不会清空缓存。
-
-
-## todolist 
-
-生成待办列表，扫描指定目录（默认 SRC_PNG），与 SRC_PNG.json 对比，将差异文件写入 `todo.json` 并输出。
-
-    node TinyPNGTools.js todolist
-
-扫描 SRC_PNG 目录：
-
-    node TinyPNGTools.js todolist
-
-扫描外部源目录并忽略指定文件：
-
-    node TinyPNGTools.js todolist D:\my-images --ignore D:\my-images\ignore.json
-
-该命令会：
-
-- 扫描源目录中所有支持的图片文件
-- 计算每个文件内容的 MD5
-- 与 SRC_PNG.json 中的 src_md5 / out_md5 对比
-- 将 MD5 不匹配的文件列表写入 `todo.json`
-- 在控制台输出 `todo.json` 的内容
-
-## help 命令
-
-查看当前支持的命令和参数：
-
-    node TinyPNGTools.js --help
-
-也可以使用短参数：
-
-    node TinyPNGTools.js -h
-
-该命令只打印帮助信息，不会读取 `config.json`，也不会执行压缩或清理操作。
-
-## SRC_PNG.json
-
-`SRC_PNG.json` 用来记录已经处理过的文件内容哈希。每个文件记录两个 MD5 值：
-
-    {
-      "files": [
-        {
-          "path": "GameFramework\\Res\\FairyGui\\ResCommon_atlas0.png",
-          "src_md5": "压缩前文件内容MD5",
-          "out_md5": "压缩后文件内容MD5"
-        }
-      ]
-    }
-
-判断是否需要压缩时，工具会把当前文件内容 MD5 与 `src_md5`、`out_md5` 任意一个值比较。
-
-在 `--source` 模式下，如果当前文件内容 MD5 命中 `src_md5` 或 `out_md5`，并且 `OUT_PNG` 中存在同相对路径文件，工具会跳过 Tinify 压缩流程：先把源目录文件复制到工作目录 `SRC_PNG`，再把 `OUT_PNG` 中的缓存文件复制回外部源目录。
-
-如果 MD5 命中但 `OUT_PNG` 中没有同相对路径文件，该文件仍会进入压缩流程。
-
-文件压缩完成后，工具会将压缩前内容 MD5 写入 `src_md5`，将压缩后内容 MD5 写入 `out_md5`。
+- [TinyPNG 官网](https://tinypng.com/)
+- [API Key 申请](https://tinify.com/developers)
+- [API 参考文档](https://tinify.com/developers/reference/http)
