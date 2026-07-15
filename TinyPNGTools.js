@@ -114,7 +114,7 @@ function formatHelp() {
     '  node TinyPNGTools.js clear',
     '  node TinyPNGTools.js todolist [sourceDir] [--ignore <path>]',
     '  node TinyPNGTools.js --help',
-    '  node TinyPNGTools.js reset-ignore <path>',
+    '  node TinyPNGTools.js reset-ignore <path> [clearDir] [sourceDir]',
     '',
     'Commands:',
     '  default                 Compress pending images from SRC_PNG to OUT_PNG.',
@@ -123,7 +123,7 @@ function formatHelp() {
     '  clear                   Clear SRC_PNG, OUT_PNG, RETRY_PNG, FAIL_PNG, delete todo.json, reset SRC_PNG.json.',
     '  todolist [sourceDir] [--ignore <path>]  Scan directory and write diff to todo.json (defaults to SRC_PNG).',
     '  --help, -h              Show this help.',
-    '  reset-ignore <path>     Reset ignored files: delete from OUT_PNG and remove from SRC_PNG.json.',
+    '  reset-ignore <path> [clearDir] [sourceDir]  Reset ignored files: delete from SRC_PNG/OUT_PNG, remove from SRC_PNG.json, optionally clear and restore from external dirs.',
   ].join('\n');
 }
 
@@ -516,7 +516,9 @@ async function main() {
 
   if (process.argv[2] === 'reset-ignore' && process.argv[3]) {
     const ignoreSet=loadIgnoreList(path.resolve(process.argv[3]));
-    resetIgnoredFiles(baseDir,ignoreSet);
+    const clearDir=process.argv[4]?path.resolve(process.argv[4]):null;
+    const sourceDir=process.argv[5]?path.resolve(process.argv[5]):null;
+    resetIgnoredFiles(baseDir,ignoreSet,clearDir,sourceDir);
     console.log('已重置忽略文件: '+process.argv[3]);
     return;
   }
@@ -626,11 +628,15 @@ function clearDirectory(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
-function resetIgnoredFiles(baseDir, ignoreSet) {
+function resetIgnoredFiles(baseDir, ignoreSet, clearDir, sourceDir) {
   if (!ignoreSet || ignoreSet.size===0) return;
   const data=readSrcPngJson(baseDir);
   data.files=data.files.filter(f=>{
     if(ignoreSet.has(f.path)){
+      // 从 SRC_PNG 删除
+      const srcFile=path.join(baseDir,WORK_DIRS.src,f.path);
+      if(fs.existsSync(srcFile))fs.rmSync(srcFile,{force:true});
+      // 从 OUT_PNG 删除
       const outFile=path.join(baseDir,WORK_DIRS.out,f.path);
       if(fs.existsSync(outFile))fs.rmSync(outFile,{force:true});
       return false;
@@ -638,6 +644,29 @@ function resetIgnoredFiles(baseDir, ignoreSet) {
     return true;
   });
   fs.writeFileSync(path.join(baseDir,'SRC_PNG.json'),JSON.stringify(data,null,2),'utf8');
+  // 如果提供了 clearDir，从 clearDir 中删除忽略文件
+  if(clearDir){
+    for(const ignorePath of ignoreSet){
+      const targetFile=path.join(clearDir,ignorePath);
+      const targetDir=path.dirname(targetFile);
+      // 只在文件存在且父目录存在时才删除，避免误删
+      if(fs.existsSync(targetFile)&&fs.existsSync(targetDir)){
+        fs.rmSync(targetFile,{force:true});
+        removeEmptyParents(targetDir,clearDir);
+      }
+    }
+  }
+  // 如果同时提供了 clearDir 和 sourceDir，从 sourceDir 复制到 clearDir
+  if(clearDir&&sourceDir){
+    for(const ignorePath of ignoreSet){
+      const sourceFile=path.join(sourceDir,ignorePath);
+      const targetFile=path.join(clearDir,ignorePath);
+      if(fs.existsSync(sourceFile)){
+        ensureParentDir(targetFile);
+        fs.copyFileSync(sourceFile,targetFile);
+      }
+    }
+  }
 }
 
 function clearCache(baseDir) {

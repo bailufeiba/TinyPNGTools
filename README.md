@@ -92,7 +92,8 @@ node TinyPNGTools.js --source D:\my-images --ignore D:\my-images\ignore.json
 | `node TinyPNGTools.js --source <dir> [--ignore <path>]` | 同步模式：压缩外部目录差异文件 |
 | `node TinyPNGTools.js clear` | 清空所有缓存，强制重新压缩 |
 | `node TinyPNGTools.js todolist [sourceDir] [--ignore <path>]` | 扫描目录生成差异列表，写入 `todo.json` |
-| `node TinyPNGTools.js reset-ignore <path>` | 重置已忽略文件：从 `OUT_PNG` 删除缓存并从 `SRC_PNG.json` 移除记录 |
+| 
+ode TinyPNGTools.js reset-ignore <path> [clearDir] [sourceDir] | 重置已忽略文件：从 SRC_PNG/OUT_PNG 删除，从 SRC_PNG.json 移除；可选清除外部目录并从来源恢复 |
 | `node TinyPNGTools.js --help` / `-h` | 查看帮助信息 |
 
 ### clear 命令
@@ -208,19 +209,31 @@ TEST/FAIL_PNG
 - 若 MD5 命中但 `OUT_PNG` 无缓存，仍进入压缩流程
 ### reset-ignore 命令
 
-当某些文件被加入 `ignore.json` 不再需要压缩，但之前已在 `OUT_PNG` 中留有缓存且 `SRC_PNG.json` 中已有记录时，可用此命令清理：
+根据忽略列表清理已压缩的图片缓存，支持可选的外部目录清除和恢复。
 
 ```
 node TinyPNGTools.js reset-ignore D:\my-images\ignore.json
+node TinyPNGTools.js reset-ignore D:\my-images\ignore.json D:\clear-dir
+node TinyPNGTools.js reset-ignore D:\my-images\ignore.json D:\clear-dir D:\source-dir
 ```
 
-执行后：
+**参数说明**：
 
-- 读取 `ignore.json` 中列出的文件路径
-- 删除 `OUT_PNG` 中对应的缓存文件
-- 从 `SRC_PNG.json` 中移除这些文件的记录
+| 参数 | 说明 |
+|------|------|
+| `<path>` | 忽略 JSON 文件路径（必填） |
+| `[clearDir]` | 外部清除目录（可选） |
+| `[sourceDir]` | 外部来源目录（可选，需与 clearDir 同时使用） |
 
-下次压缩时这些文件会被视为全新文件重新处理。
+**执行流程**：
+
+1. 读取 `ignore.json` 中的文件路径
+2. 从 `SRC_PNG` 和 `OUT_PNG` 中删除对应文件
+3. 从 `SRC_PNG.json` 中移除这些文件的记录
+4. 如果传入了 `clearDir`：从 `clearDir` 中删除对应文件（仅父目录存在时执行）
+5. 如果同时传入了 `clearDir` 和 `sourceDir`：从 `sourceDir` 复制对应文件到 `clearDir`（自动创建父目录）
+
+下次压缩时被重置的文件会被视为全新文件重新处理。
 
 ---
 

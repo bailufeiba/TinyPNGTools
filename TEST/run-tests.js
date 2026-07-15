@@ -62,6 +62,7 @@ test('exports required functions', () => {
   assert.strictEqual(typeof tool.clearCache, 'function');
   assert.strictEqual(typeof tool.generateTodoList, 'function');
   assert.strictEqual(typeof tool.formatHelp, 'function');
+  assert.strictEqual(typeof tool.resetIgnoredFiles, 'function');
 });
 
 test('exports planned work directory keys', () => {
@@ -141,7 +142,7 @@ test('creates only work directories under provided base directory', () => {
 test('maps source relative path to output path', () => {
   const sourceFile = path.join(TEST_ROOT, 'SRC_PNG', 'nested', 'image.png');
   const relativePath = tool.getRelativePath(TEST_ROOT, 'SRC_PNG', sourceFile);
-  assert.strictEqual(relativePath, path.join('nested', 'image.png'));
+  assert.strictEqual(relativePath, 'nested/image.png');
   assert.strictEqual(
     tool.getOutputPath(TEST_ROOT, 'OUT_PNG', relativePath),
     path.join(TEST_ROOT, 'OUT_PNG', 'nested', 'image.png')
@@ -555,7 +556,7 @@ test('generateFileList returns paths relative to given dir with md5', () => {
   const paths = result.files.map(f => f.path).sort();
 
   assert.strictEqual(paths.length, 2);
-  assert.deepStrictEqual(paths, ['a.png', path.join('nested', 'b.jpg')].sort());
+  assert.deepStrictEqual(paths, ['a.png', 'nested/b.jpg'].sort());
   for (const f of result.files) {
     assert.strictEqual(typeof f.md5, 'string');
     assert.strictEqual(f.md5.length, 32);
@@ -693,7 +694,7 @@ test('loadIgnoreList returns a Set of paths from JSON file', () => {
   const set = tool.loadIgnoreList(ignorePath);
 
   assert.strictEqual(set.has('a.png'), true);
-  assert.strictEqual(set.has(path.join('nested', 'b.jpg')), true);
+  assert.strictEqual(set.has('nested/b.jpg'), true);
   assert.strictEqual(set.size, 2);
 });
 
@@ -746,6 +747,71 @@ test('generateTodoList skips ignored files', () => {
   assert.deepStrictEqual(todo.files.map(f => f.path), ['keep.png']);
 });
 
+
+test('resetIgnoredFiles deletes from SRC_PNG, OUT_PNG and removes from SRC_PNG.json', () => {
+  writeFile(path.join('SRC_PNG', 'sub', 'a.png'), 'src-a');
+  writeFile(path.join('OUT_PNG', 'sub', 'a.png'), 'out-a');
+  writeFile(path.join('SRC_PNG', 'b.png'), 'src-b');
+  writeFile(path.join('OUT_PNG', 'b.png'), 'out-b');
+  fs.writeFileSync(path.join(TEST_ROOT, 'SRC_PNG.json'), JSON.stringify({
+    files: [
+      { path: 'sub/a.png', src_md5: md5('src-a'), out_md5: md5('out-a') },
+      { path: 'b.png', src_md5: md5('src-b'), out_md5: md5('out-b') }
+    ]
+  }));
+
+  tool.resetIgnoredFiles(TEST_ROOT, new Set(['sub/a.png']));
+
+  assert.strictEqual(exists(path.join('SRC_PNG', 'sub', 'a.png')), false);
+  assert.strictEqual(exists(path.join('OUT_PNG', 'sub', 'a.png')), false);
+  assert.strictEqual(exists(path.join('SRC_PNG', 'b.png')), true);
+  assert.strictEqual(exists(path.join('OUT_PNG', 'b.png')), true);
+  var data = JSON.parse(fs.readFileSync(path.join(TEST_ROOT, 'SRC_PNG.json'), 'utf8'));
+  assert.strictEqual(data.files.length, 1);
+  assert.strictEqual(data.files[0].path, 'b.png');
+});
+
+test('resetIgnoredFiles with clearDir deletes from external dir', () => {
+  var clearDir = path.join(TEST_ROOT, 'CLEAR');
+  fs.mkdirSync(path.join(clearDir, 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(clearDir, 'sub', 'a.png'), 'clear-a');
+  fs.writeFileSync(path.join(clearDir, 'b.png'), 'clear-b');
+  fs.writeFileSync(path.join(clearDir, 'c.png'), 'clear-c');
+  fs.writeFileSync(path.join(TEST_ROOT, 'SRC_PNG.json'), JSON.stringify({ files: [] }));
+
+  tool.resetIgnoredFiles(TEST_ROOT, new Set(['sub/a.png', 'b.png']), clearDir);
+
+  assert.strictEqual(fs.existsSync(path.join(clearDir, 'sub', 'a.png')), false);
+  assert.strictEqual(fs.existsSync(path.join(clearDir, 'b.png')), false);
+  assert.strictEqual(fs.existsSync(path.join(clearDir, 'c.png')), true);
+});
+
+test('resetIgnoredFiles skips clearDir deletion when parent dir missing', () => {
+  var clearDir = path.join(TEST_ROOT, 'CLEAR2');
+  fs.mkdirSync(clearDir, { recursive: true });
+  fs.writeFileSync(path.join(clearDir, 'a.png'), 'a');
+  fs.writeFileSync(path.join(TEST_ROOT, 'SRC_PNG.json'), JSON.stringify({ files: [] }));
+
+  // Path with missing parent dir should be skipped, not throw
+  tool.resetIgnoredFiles(TEST_ROOT, new Set(['missing/sub/b.png']), clearDir);
+  assert.strictEqual(fs.existsSync(path.join(clearDir, 'a.png')), true);
+});
+
+test('resetIgnoredFiles with clearDir+sourceDir copies from source', () => {
+  var clearDir = path.join(TEST_ROOT, 'CLEAR3');
+  var srcDir2 = path.join(TEST_ROOT, 'SOURCE');
+  fs.mkdirSync(path.join(clearDir, 'sub'), { recursive: true });
+  fs.mkdirSync(path.join(srcDir2, 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(clearDir, 'sub', 'a.png'), 'old-clear-a');
+  fs.writeFileSync(path.join(srcDir2, 'sub', 'a.png'), 'new-source-a');
+  fs.writeFileSync(path.join(TEST_ROOT, 'SRC_PNG.json'), JSON.stringify({ files: [] }));
+
+  tool.resetIgnoredFiles(TEST_ROOT, new Set(['sub/a.png']), clearDir, srcDir2);
+
+  // Deleted from clearDir then re-copied from sourceDir
+  assert.strictEqual(fs.existsSync(path.join(clearDir, 'sub', 'a.png')), true);
+  assert.strictEqual(fs.readFileSync(path.join(clearDir, 'sub', 'a.png'), 'utf8'), 'new-source-a');
+});
 async function run() {
   let passed = 0;
   for (const item of tests) {
