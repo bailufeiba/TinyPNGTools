@@ -92,8 +92,7 @@ node TinyPNGTools.js --source D:\my-images --ignore D:\my-images\ignore.json
 | `node TinyPNGTools.js --source <dir> [--ignore <path>]` | 同步模式：压缩外部目录差异文件 |
 | `node TinyPNGTools.js clear` | 清空所有缓存，强制重新压缩 |
 | `node TinyPNGTools.js todolist [sourceDir] [--ignore <path>]` | 扫描目录生成差异列表，写入 `todo.json` |
-| 
-ode TinyPNGTools.js reset-ignore <path> [clearDir] [sourceDir] | 重置已忽略文件：从 SRC_PNG/OUT_PNG 删除，从 SRC_PNG.json 移除；可选清除外部目录并从来源恢复 |
+| `TinyPNGTools.js reset-ignore <path> [clearDir] [sourceDir]` | 重置已忽略文件：从 SRC_PNG/OUT_PNG 删除，从 SRC_PNG.json 移除；可选清除外部目录并从来源恢复 |
 | `node TinyPNGTools.js --help` / `-h` | 查看帮助信息 |
 
 ### clear 命令
