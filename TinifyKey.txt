@@ -1,0 +1,3 @@
+YourTinyPNGApiKey1
+YourTinyPNGApiKey2
+YourTinyPNGApiKey3

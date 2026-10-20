@@ -1,4 +1,4 @@
-﻿# TinyPNGTools
+# TinyPNGTools
 
 TinyPNGTools 是一个基于 [TinyPNG / Tinify HTTP API](https://tinify.com/developers) 的批量图片压缩命令行工具，使用纯 Node.js 实现。
 
@@ -38,6 +38,27 @@ TinyPNGTools 是一个基于 [TinyPNG / Tinify HTTP API](https://tinify.com/deve
 | `concurrency` | 并发压缩数，默认 `5` |
 | `extensions` | 支持的图片扩展名 |
 | `maxRetries` | 单文件最大重试次数，默认 `3` |
+
+### 月度 API KEY 池
+
+把多组 Key 每行一个（首行可保留标题）写进根目录的 `TinifyKey.txt`，工具即可自动轮换使用：
+
+- **当月首次启动**自动从 `TinifyKey.txt` 复制生成 `API_KEY/{年}年{MM}月API_KEY.txt`（月份补零，如 `API_KEY/2026年06月API_KEY.txt`）
+- 压缩时取当月文件中**第一个** Key；已存在则不会覆盖，所以失效 Key 的删除会跨运行保留
+- 每次 Key 生效时打印当前正在使用的 Key 及其在当月池中的位置（**Key 一律脱敏**，日志中不会出现完整 Key）：
+
+  ```
+  当前使用的 API KEY: 11Sd…r7Yp（当月第 1/100 个）
+  当前使用的 API KEY: dYCj…01w5（当月第 2/100 个，剩余 99 个）
+  当月 API KEY 已全部失败，当前使用的 API KEY: mrPm…WGtK（来自 config.json）
+  ```
+
+- Key 层面失败（`401` 无效、`402` 额度用尽、`429` 限流）时：打印 `API KEY 失败: 11Sd…r7Yp（当月第 1/100 个）`，从当月文件删除该行，改用下一个 Key 继续压缩
+- 当月文件全部失败后回落到 `config.json` 的 `apiKey`；config Key 也失败则输出提示并以退出码 `1` 中止（剩余文件留在 `SRC_PNG` 等下次运行，不会倒入 `FAIL_PNG`）
+- 图片本身的问题（`400`/`422`）和服务端故障（`5xx`）不会删除 Key，仍走原有的 `RETRY_PNG` / `FAIL_PNG` 流程
+- `TinifyKey.txt` 不存在时打印告警，直接使用 `config.json` 的 `apiKey`
+
+想补入新 Key 或恢复已失效的 Key，由管理员更新 `TinifyKey.txt` 后手动执行 `regen-keys`（见下文）。
 
 ---
 
@@ -91,8 +112,9 @@ node TinyPNGTools.js --source D:\my-images --ignore D:\my-images\ignore.json
 | `node TinyPNGTools.js` | 基础模式：压缩 `SRC_PNG` 到 `OUT_PNG` |
 | `node TinyPNGTools.js --source <dir> [--ignore <path>]` | 同步模式：压缩外部目录差异文件 |
 | `node TinyPNGTools.js clear` | 清空所有缓存，强制重新压缩 |
+| `node TinyPNGTools.js regen-keys` | 用 `TinifyKey.txt` 重建当月 API KEY 文件 |
 | `node TinyPNGTools.js todolist [sourceDir] [--ignore <path>]` | 扫描目录生成差异列表，写入 `todo.json` |
-| `TinyPNGTools.js reset-ignore <path> [clearDir] [sourceDir]` | 重置已忽略文件：从 SRC_PNG/OUT_PNG 删除，从 SRC_PNG.json 移除；可选清除外部目录并从来源恢复 |
+| `node TinyPNGTools.js reset-ignore <path> [clearDir] [sourceDir] | 重置已忽略文件：从 SRC_PNG/OUT_PNG 删除，从 SRC_PNG.json 移除；可选清除外部目录并从来源恢复 |
 | `node TinyPNGTools.js --help` / `-h` | 查看帮助信息 |
 
 ### clear 命令
@@ -108,6 +130,19 @@ node TinyPNGTools.js --source D:\my-images --ignore D:\my-images\ignore.json
 - 清空并重建 `SRC_PNG`、`OUT_PNG`、`RETRY_PNG`、`FAIL_PNG`
 - 删除 `todo.json`
 - 将 `SRC_PNG.json` 重置为 `{ "files": [] }`
+
+### regen-keys 命令
+
+用 `TinifyKey.txt` 覆盖重建当月的 Key 文件。当月文件已存在时会先确认，因为该操作会**恢复已失效的 Key**（它们会在后续压缩中再次失败并被删除）：
+
+```
+node TinyPNGTools.js regen-keys
+```
+
+适用场景：
+
+- 管理员在 `TinifyKey.txt` 中补充了新的 Key
+- 想重新尝试之前被判失败的 Key
 
 ### todolist 命令
 
@@ -137,6 +172,7 @@ SRC_PNG/      源图片
 OUT_PNG/      压缩输出
 RETRY_PNG/    待重试
 FAIL_PNG/     重试失败
+API_KEY/      当月 API KEY 池（自动生成）
 ```
 
 ### 自动测试目录
@@ -155,9 +191,10 @@ TEST/FAIL_PNG
 ### 启动流程
 
 1. 读取并校验 `config.json`
-2. 创建工作目录（正式或测试）
-3. 检查 `RETRY_PNG` 是否有待重试文件
-4. 进入重试流程或正常压缩流程
+2. 准备当月 API KEY 池（本月首次启动时从 `TinifyKey.txt` 生成）
+3. 创建工作目录（正式或测试）
+4. 检查 `RETRY_PNG` 是否有待重试文件
+5. 进入重试流程或正常压缩流程
 
 ### 正常压缩流程
 

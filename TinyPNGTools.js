@@ -1,4 +1,4 @@
-﻿// TinyPNGTools - 基于 TinyPNG/Tinify HTTP API 的图片批量压缩命令行工具
+// TinyPNGTools - 基于 TinyPNG/Tinify HTTP API 的图片批量压缩命令行工具
 // 用法: node TinyPNGTools.js [--source <dir>] [--ignore <path>]
 
 const fs = require('fs');
@@ -78,6 +78,201 @@ function loadConfig(baseDir) {
   return normalizeConfig(raw);
 }
 
+// ===== 月度 API KEY 池 =====
+// 当月 Key 池位于 ./API_KEY/{年}年{MM}月API_KEY.txt（月份补零两位）。
+// 本月首次启动时从 TinifyKey.txt 复制生成；压缩时 Key 层面的失败（401/402/429）会被就地删除并换下一个。
+
+const API_KEY_DIR = 'API_KEY';
+const API_KEY_PATTERN = /^[A-Za-z0-9]{32}$/;
+
+// 所有 API KEY 均不可用时抛出，用于中止整轮运行
+class AllKeysExhaustedError extends Error {
+  constructor(message = '当月 API KEY 与 config.json 的 API KEY 均已失败，无可用 Key，已中止。') {
+    super(message);
+    this.name = 'AllKeysExhaustedError';
+  }
+}
+
+// 生成当月 Key 文件名，月份补零: 2026年06月API_KEY.txt
+function monthlyKeyFileName(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  return `${year}年${month}月API_KEY.txt`;
+}
+
+function monthlyKeyFilePath(baseDir, date = new Date()) {
+  return path.join(baseDir, API_KEY_DIR, monthlyKeyFileName(date));
+}
+
+// 从 Key 文件内容中提取合法 Key（每行一个 32 位字母数字，标题行等忽略）
+function parseKeyLines(content) {
+  return content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => API_KEY_PATTERN.test(line));
+}
+
+function listMonthlyKeys(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return [];
+  }
+  return parseKeyLines(fs.readFileSync(filePath, 'utf8'));
+}
+
+// 复制 Key 文件，自动创建 API_KEY 目录
+function copyKeyFile(sourcePath, targetPath) {
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.copyFileSync(sourcePath, targetPath);
+}
+
+// 本月首次启动时生成当月 Key 文件；已存在则保持不动（保留已删除的失效 Key 状态）
+function ensureMonthlyKeyFile(baseDir, options = {}) {
+  const { date = new Date(), logger = console, sourcePath = path.join(baseDir, 'TinifyKey.txt') } = options;
+  const targetPath = monthlyKeyFilePath(baseDir, date);
+
+  if (fs.existsSync(targetPath)) {
+    return { path: targetPath, created: false, sourceMissing: false };
+  }
+
+  if (!fs.existsSync(sourcePath)) {
+    logger.error(`未找到 ${path.basename(sourcePath)}，无法生成当月 API KEY 文件，将直接使用 config.json 的 API KEY。`);
+    return { path: targetPath, created: false, sourceMissing: true };
+  }
+
+  copyKeyFile(sourcePath, targetPath);
+  logger.log(`本月首次启动，已生成 ${path.relative(baseDir, targetPath)}`);
+  return { path: targetPath, created: true, sourceMissing: false };
+}
+
+// 由工具管理员手动重建当月 Key 文件（会让已失效的 Key 复活）
+function regenMonthlyKeyFile(baseDir, options = {}) {
+  const { date = new Date(), logger = console, sourcePath = path.join(baseDir, 'TinifyKey.txt') } = options;
+  const targetPath = monthlyKeyFilePath(baseDir, date);
+
+  if (!fs.existsSync(sourcePath)) {
+    throw new Error(`未找到 ${path.basename(sourcePath)}，无法重新生成当月 API KEY 文件。`);
+  }
+
+  copyKeyFile(sourcePath, targetPath);
+  const keys = listMonthlyKeys(targetPath);
+  logger.log(`已重新生成 ${path.relative(baseDir, targetPath)}，共 ${keys.length} 个 API KEY`);
+  return { path: targetPath, keys };
+}
+
+// 从当月 Key 文件中删掉指定 Key，保留其余行与顺序
+function removeMonthlyKey(filePath, apiKey) {
+  if (!fs.existsSync(filePath)) {
+    return false;
+  }
+  const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
+  const remaining = lines.filter((line) => line.trim() !== apiKey);
+  if (remaining.length === lines.length) {
+    return false;
+  }
+  fs.writeFileSync(filePath, remaining.join('\n'), 'utf8');
+  return true;
+}
+
+// 日志脱敏：只保留前 4 位与后 4 位，避免把完整 Key 写进日志
+function maskApiKey(apiKey) {
+  if (typeof apiKey !== 'string' || apiKey.length === 0) {
+    return '';
+  }
+  if (apiKey.length <= 8) {
+    return `${apiKey.slice(0, 2)}…`;
+  }
+  return `${apiKey.slice(0, 4)}…${apiKey.slice(-4)}`;
+}
+
+// Key 管理器：始终持有"当前 Key"；Key 生效时打印脱敏后的当前 Key，失败时打印脱敏后的失败 Key、
+// 从当月文件删除并切换到下一个；当月池空则回落到 config.json 的 Key，
+// config Key 也失败则抛 AllKeysExhaustedError。
+function createKeyManager(options = {}) {
+  const { baseDir, apiKey: configApiKey = '', date = new Date(), logger = console } = options;
+  const filePath = monthlyKeyFilePath(baseDir, date);
+
+  const monthlyKeys = listMonthlyKeys(filePath);
+  const poolSize = monthlyKeys.length; // 本次运行开始时当月池里的 Key 数量
+  let consumed = 0; // 本次运行中已丢弃的 Key 数量
+
+  let currentKey = null;
+  let fromMonthly = false;
+  let exhausted = false;
+
+  if (poolSize > 0) {
+    currentKey = monthlyKeys[0];
+    fromMonthly = true;
+    logger.log(`当前使用的 API KEY: ${maskApiKey(currentKey)}（当月第 1/${poolSize} 个）`);
+  } else if (configApiKey) {
+    currentKey = configApiKey;
+    logger.log(`当前使用的 API KEY: ${maskApiKey(configApiKey)}（当月 Key 池为空，来自 config.json）`);
+  } else {
+    exhausted = true;
+  }
+
+  // 串行化"删除 + 切换"，避免并发失败重复删除同一个 Key
+  let queue = Promise.resolve();
+
+  async function rotateOnce(failedKey) {
+    if (exhausted) {
+      throw new AllKeysExhaustedError();
+    }
+    if (failedKey !== currentKey) {
+      // 其它并发请求已完成轮换，直接复用最新 Key
+      return;
+    }
+
+    // 当月池内的 Key 才报位置；回落到 config Key 时不套用当月序号
+    const failedLabel = fromMonthly
+      ? `${maskApiKey(failedKey)}（当月第 ${consumed + 1}/${poolSize} 个）`
+      : `${maskApiKey(failedKey)}（来自 config.json）`;
+    logger.error(`API KEY 失败: ${failedLabel}`);
+
+    if (!fromMonthly) {
+      exhausted = true;
+      throw new AllKeysExhaustedError();
+    }
+
+    removeMonthlyKey(filePath, failedKey);
+    consumed += 1;
+
+    const remaining = listMonthlyKeys(filePath);
+    if (remaining.length > 0) {
+      currentKey = remaining[0];
+      logger.log(
+        `当前使用的 API KEY: ${maskApiKey(currentKey)}（当月第 ${consumed + 1}/${consumed + remaining.length} 个，剩余 ${remaining.length} 个）`
+      );
+      return;
+    }
+
+    if (configApiKey) {
+      currentKey = configApiKey;
+      fromMonthly = false;
+      logger.log(`当月 API KEY 已全部失败，当前使用的 API KEY: ${maskApiKey(configApiKey)}（来自 config.json）`);
+      return;
+    }
+
+    exhausted = true;
+    throw new AllKeysExhaustedError();
+  }
+
+  function rotate(failedKey) {
+    const task = queue.then(() => rotateOnce(failedKey));
+    queue = task.then(
+      () => undefined,
+      () => undefined
+    );
+    return task;
+  }
+
+  return {
+    current: () => currentKey,
+    isExhausted: () => exhausted,
+    rotate,
+    filePath,
+  };
+}
+
 // 在命令行中向用户提出 Y/N 问题并等待回答
 function askYesNo(question) {
   const rl = readline.createInterface({
@@ -112,6 +307,7 @@ function formatHelp() {
     '  node TinyPNGTools.js',
     '  node TinyPNGTools.js --source <dir> [--ignore <path>]',
     '  node TinyPNGTools.js clear',
+    '  node TinyPNGTools.js regen-keys',
     '  node TinyPNGTools.js todolist [sourceDir] [--ignore <path>]',
     '  node TinyPNGTools.js --help',
     '  node TinyPNGTools.js reset-ignore <path> [clearDir] [sourceDir]',
@@ -121,6 +317,7 @@ function formatHelp() {
     '  --source <dir>          Sync changed files from an external source directory.',
     '  --ignore <path>         Ignore paths listed in a JSON file when using --source.',
     '  clear                   Clear SRC_PNG, OUT_PNG, RETRY_PNG, FAIL_PNG, delete todo.json, reset SRC_PNG.json.',
+    '  regen-keys              Rebuild API_KEY/{year}年{MM}月API_KEY.txt from TinifyKey.txt (restores failed keys).',
     '  todolist [sourceDir] [--ignore <path>]  Scan directory and write diff to todo.json (defaults to SRC_PNG).',
     '  --help, -h              Show this help.',
     '  reset-ignore <path> [clearDir] [sourceDir]  Reset ignored files: delete from SRC_PNG/OUT_PNG, remove from SRC_PNG.json, optionally clear and restore from external dirs.',
@@ -457,49 +654,93 @@ function httpsRequest(options, body) {
   });
 }
 
-// 创建 Tinify HTTP 客户端：提供 compress 方法执行上传/下载流程
-function createTinifyClient(apiKey, request = httpsRequest) {
+// 构造带 HTTP 状态码的 Tinify 错误，便于上层区分 Key 层面的失败
+function createTinifyError(prefix, response) {
+  const error = new Error(`${prefix} ${response.statusCode}: ${parseJsonMessage(response.body)}`);
+  error.statusCode = response.statusCode;
+  return error;
+}
+
+// 使用指定 Key 完成一次上传/下载
+async function compressWithKey(apiKey, inputBuffer, request = httpsRequest) {
   const authorization = `Basic ${Buffer.from(`api:${apiKey}`).toString('base64')}`;
 
-  async function compress(inputBuffer) {
-    const uploadResponse = await request(
-      {
-        method: 'POST',
-        hostname: 'api.tinify.com',
-        path: '/shrink',
-        headers: {
-          Authorization: authorization,
-          'Content-Type': 'application/octet-stream',
-          'Content-Length': inputBuffer.length,
-        },
-      },
-      inputBuffer
-    );
-
-    if (uploadResponse.statusCode < 200 || uploadResponse.statusCode >= 300) {
-      throw new Error(`Tinify 上传失败 ${uploadResponse.statusCode}: ${parseJsonMessage(uploadResponse.body)}`);
-    }
-
-    const location = uploadResponse.headers.location;
-    if (!location) {
-      throw new Error('Tinify 上传成功但响应中没有 Location。');
-    }
-
-    const url = new URL(location);
-    const downloadResponse = await request({
-      method: 'GET',
-      hostname: url.hostname,
-      path: `${url.pathname}${url.search}`,
+  const uploadResponse = await request(
+    {
+      method: 'POST',
+      hostname: 'api.tinify.com',
+      path: '/shrink',
       headers: {
         Authorization: authorization,
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': inputBuffer.length,
       },
-    });
+    },
+    inputBuffer
+  );
 
-    if (downloadResponse.statusCode < 200 || downloadResponse.statusCode >= 300) {
-      throw new Error(`Tinify 下载失败 ${downloadResponse.statusCode}: ${parseJsonMessage(downloadResponse.body)}`);
+  if (uploadResponse.statusCode < 200 || uploadResponse.statusCode >= 300) {
+    throw createTinifyError('Tinify 上传失败', uploadResponse);
+  }
+
+  const location = uploadResponse.headers.location;
+  if (!location) {
+    throw new Error('Tinify 上传成功但响应中没有 Location。');
+  }
+
+  const url = new URL(location);
+  const downloadResponse = await request({
+    method: 'GET',
+    hostname: url.hostname,
+    path: `${url.pathname}${url.search}`,
+    headers: {
+      Authorization: authorization,
+    },
+  });
+
+  if (downloadResponse.statusCode < 200 || downloadResponse.statusCode >= 300) {
+    throw createTinifyError('Tinify 下载失败', downloadResponse);
+  }
+
+  return downloadResponse.body;
+}
+
+// 创建 Tinify HTTP 客户端：固定使用一个 Key
+function createTinifyClient(apiKey, request = httpsRequest) {
+  return {
+    compress: (inputBuffer) => compressWithKey(apiKey, inputBuffer, request),
+  };
+}
+
+// 401 无效 / 402 额度用尽 / 429 限流 视为 Key 层面的失败，需要换 Key
+const KEY_FAILURE_STATUS = new Set([401, 402, 429]);
+
+function isKeyFailure(error) {
+  return Boolean(error) && KEY_FAILURE_STATUS.has(error.statusCode);
+}
+
+// 轮换客户端：Key 层面失败时自动换下一个 Key 重试；
+// 其它错误（图片问题 400/422、服务端 5xx 等）原样抛出，交给 RETRY/FAIL 流程处理。
+function createRotatingClient(keyManager, request = httpsRequest) {
+  const maxAttempts = 512;
+
+  async function compress(inputBuffer) {
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const apiKey = keyManager.current();
+      if (!apiKey) {
+        throw new AllKeysExhaustedError();
+      }
+      try {
+        return await compressWithKey(apiKey, inputBuffer, request);
+      } catch (error) {
+        if (!isKeyFailure(error)) {
+          throw error;
+        }
+        // 无可用 Key 时 rotate 会抛 AllKeysExhaustedError，直接冒泡中止
+        await keyManager.rotate(apiKey);
+      }
     }
-
-    return downloadResponse.body;
+    throw new AllKeysExhaustedError();
   }
 
   return { compress };
@@ -555,6 +796,25 @@ async function main() {
     return;
   }
 
+  if (process.argv[2] === 'regen-keys') {
+    const sourcePath = path.join(baseDir, 'TinifyKey.txt');
+    if (!fs.existsSync(sourcePath)) {
+      throw new Error('未找到 TinifyKey.txt，无法重新生成当月 API KEY 文件。');
+    }
+    const targetPath = monthlyKeyFilePath(baseDir);
+    if (fs.existsSync(targetPath)) {
+      const confirmed = await askYesNo(
+        `重新生成会覆盖 ${path.relative(baseDir, targetPath)} 并恢复已失效的 API KEY，是否继续`
+      );
+      if (!confirmed) {
+        console.log('已取消重新生成。');
+        return;
+      }
+    }
+    regenMonthlyKeyFile(baseDir, { logger: console });
+    return;
+  }
+
   const config = loadConfig(baseDir);
 
   let sourceDir = null;
@@ -599,16 +859,31 @@ async function main() {
     ? changedFiles.map(f => path.join(baseDir, WORK_DIRS.src, f))
     : undefined;
 
-  const client = createTinifyClient(config.apiKey);
-  const summary = await runCompressionFlow({
-    baseDir,
-    config,
-    client,
-    logger: console,
-    promptRetry: () => askYesNo('检测到 RETRY_PNG 中有未完成文件，是否重试'),
-    sourceFiles: sourceFileList,
-    skipRetryCheck: Boolean(sourceDir),
-  });
+  // 压缩前准备当月 Key 池：本月首次启动时从 TinifyKey.txt 生成
+  ensureMonthlyKeyFile(baseDir, { logger: console });
+  const keyManager = createKeyManager({ baseDir, apiKey: config.apiKey, logger: console });
+  const client = createRotatingClient(keyManager);
+
+  let summary;
+  try {
+    summary = await runCompressionFlow({
+      baseDir,
+      config,
+      client,
+      logger: console,
+      promptRetry: () => askYesNo('检测到 RETRY_PNG 中有未完成文件，是否重试'),
+      sourceFiles: sourceFileList,
+      skipRetryCheck: Boolean(sourceDir),
+    });
+  } catch (error) {
+    // 所有 Key 都失败：直接退出，不把 RETRY_PNG 里的文件倒入 FAIL_PNG
+    if (error instanceof AllKeysExhaustedError) {
+      console.error(error.message);
+      process.exitCode = 1;
+      return;
+    }
+    throw error;
+  }
 
   if (sourceDir) {
     copyOutputsToSource(baseDir, sourceDir, changedFiles);
@@ -728,6 +1003,10 @@ async function retryFailedFiles(baseDir, config, client, logger, summary) {
         await compressRetryFile(baseDir, retryFile, client, logger);
         summary.success += 1;
       } catch (error) {
+        // 无可用 Key 属于中止，不是文件失败，交给上层退出
+        if (error instanceof AllKeysExhaustedError) {
+          throw error;
+        }
         logger.error(`重试失败: ${getRelativePath(baseDir, WORK_DIRS.retry, retryFile)} - ${error.message}`);
       }
     });
@@ -752,6 +1031,10 @@ async function processSourceFiles(baseDir, config, client, logger, summary, sour
       await compressSourceFile(baseDir, sourceFile, client, logger);
       summary.success += 1;
     } catch (error) {
+      // 无可用 Key 属于中止，不当成文件失败处理（不进 RETRY_PNG）
+      if (error instanceof AllKeysExhaustedError) {
+        throw error;
+      }
       logger.error(`压缩失败: ${relativePath} - ${error.message}`);
       copyToRetry(baseDir, sourceFile);
     }
@@ -799,6 +1082,17 @@ module.exports = {
   moveRetryFailure,
   runQueue,
   createTinifyClient,
+  createRotatingClient,
+  createKeyManager,
+  AllKeysExhaustedError,
+  maskApiKey,
+  compressWithKey,
+  isKeyFailure,
+  monthlyKeyFileName,
+  monthlyKeyFilePath,
+  ensureMonthlyKeyFile,
+  regenMonthlyKeyFile,
+  listMonthlyKeys,
   main,
   loadConfig,
   askYesNo,
